@@ -38,7 +38,7 @@ class ZoneState:
     zone_name: str | None = None
 
     standby: bool | None = None
-    source: str | None = None  # "1","2","3","loc"
+    source: str | None = None  # "1","2","3","4","loc"
     last_source: str | None = None
     volume: int | None = None  # 0..30
     muted: bool | None = None
@@ -166,32 +166,29 @@ class NetAmpClient:
 
     def _apply_param(self, zone: int, param: str, value: str) -> None:
         st = self.zones[zone]
+
         if param == PARAM_SRC:
-    # value like '1','2','3','loc','on','off'
-    if value == "off":
-        st.standby = True
-        # Preserve last known non-off source
-        if st.source in ("1", "2", "3", "loc"):
-            st.last_source = st.source
-        return
-
-    if value == "on":
-        # Exit standby and select last playing source (device-side). Keep our last_source if we have it.
-        st.standby = False
-        if st.last_source and st.source not in ("1", "2", "3", "loc"):
-            st.source = st.last_source
-        return
-
-    # Any explicit source selection exits standby
-    st.standby = False
-    st.source = value
-    if value in ("1", "2", "3", "loc"):
-        st.last_source = value
-    return
-            if value in ("off",):
+            # value like '1','2','3','loc','on','off'
+            if value == "off":
+                st.standby = True
+                # Preserve last known non-off source
+                if st.source in ("1", "2", "3", "4", "loc"):
+                    st.last_source = st.source
                 st.source = "off"
                 return
+
+            if value == "on":
+                # Exit standby and select last playing source (device-side).
+                st.standby = False
+                if st.last_source and st.source not in ("1", "2", "3", "4", "loc"):
+                    st.source = st.last_source
+                return
+
+            # Any explicit source selection exits standby
+            st.standby = False
             st.source = value
+            if value in ("1", "2", "3", "4", "loc"):
+                st.last_source = value
             return
 
         if param == PARAM_VOL:
@@ -290,7 +287,7 @@ class NetAmpClient:
 
     # ----- High level commands -----
     async def async_set_source(self, zone: int, source: str) -> None:
-        # source: "1","2","3","loc"
+        # source: "1","2","3","4","loc"
         await self._send_and_collect(f"$s{zone}src{source}")
 
     async def async_turn_on(self, zone: int) -> None:
