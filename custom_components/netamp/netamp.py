@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -28,29 +28,22 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Examples: $r1src3  | $r2vol12 | $r1bas-2 | $r1znnKitchen
-# Some firmwares might reply with $r1mute or $r1moff (seen in spec examples).
 RESP_RE = re.compile(r"^\$(?P<cmd>r)(?P<zone>[12X])(?P<body>.+)$")
 
 @dataclass
 class ZoneState:
     zone: int
     zone_name: str | None = None
-
     standby: bool | None = None
-    source: str | None = None  # "1","2","3","4","loc"
+    source: str | None = None  # "1","2","3","loc"
     last_source: str | None = None
     volume: int | None = None  # 0..30
     muted: bool | None = None
-
-    max_volume: int | None = None  # 0..30
-    bass: int | None = None  # -7..7
-    treble: int | None = None  # -7..7
-    balance: int | None = None  # -15..15
-
-    lim: str | None = None  # "1","a","d"
-
-    # Source names (global + local)
+    max_volume: int | None = None
+    bass: int | None = None
+    treble: int | None = None
+    balance: int | None = None
+    lim: str | None = None
     sn1: str | None = None
     sn2: str | None = None
     sn3: str | None = None
@@ -69,23 +62,22 @@ class NetAmpClient:
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self.logger = _LOGGER
-
         self.zones: dict[int, ZoneState] = {z: ZoneState(zone=z) for z in ZONES}
 
     async def async_ping(self) -> None:
-        # Connect and do a lightweight query (gpv zone1). Any response means OK.
         await self._ensure_connected()
-        await self._send_and_collect(f"$g1gpv")
+        await self._send_and_collect("$g1gpv")
 
     async def async_close(self) -> None:
         if self._writer is not None:
             try:
                 self._writer.close()
                 await self._writer.wait_closed()
-            except Exception:  # noqa: BLE001
-                pass
-        self._reader = None
-        self._writer = None
+            except Exception as err:
+                self.logger.debug("Error closing connection: %s", err)
+            finally:
+                self._reader = None
+                self._writer = None
 
     async def _ensure_connected(self) -> None:
         if self._reader and self._writer and not self._writer.is_closing():
@@ -95,15 +87,12 @@ class NetAmpClient:
     async def _write_line(self, line: str) -> None:
         if not self._writer:
             raise NetAmpProtocolError("Not connected")
-        # NetAmp expects CRLF
         self._writer.write((line + "\r\n").encode("ascii", "ignore"))
         await self._writer.drain()
 
     async def _read_available_lines(self, idle_timeout: float = 0.25, max_lines: int = 64) -> list[str]:
-        """Read lines until no new data arrives for idle_timeout."""
         if not self._reader:
             raise NetAmpProtocolError("Not connected")
-
         lines: list[str] = []
         while len(lines) < max_lines:
             try:
@@ -122,32 +111,23 @@ class NetAmpClient:
             await self._ensure_connected()
             await self._write_line(cmd)
             lines = await self._read_available_lines()
-            # If device returns nothing, treat as error (could be network drop)
             if not lines:
+                await self.async_close()
                 raise NetAmpProtocolError("No response from NetAmp")
-            # Parse / update state from all lines
             for line in lines:
                 self._handle_response_line(line)
             return lines
 
     def _handle_response_line(self, line: str) -> None:
-        # Error example: $rxError
         if line.startswith("$rxError"):
             raise NetAmpProtocolError("NetAmp error response")
-
         m = RESP_RE.match(line)
         if not m:
-            # Ignore anything unexpected
-            self.logger.debug("Unparsed NetAmp line: %s", line)
             return
-
         zone_s = m.group("zone")
         body = m.group("body")
-
-        # Zone can be 'X' for global name commands; we apply those to both zones.
         zones = list(self.zones.keys()) if zone_s == "X" else [int(zone_s)]
 
-        # Identify parameter by known prefixes, longest first
         for param in (PARAM_ZNN, PARAM_SN1, PARAM_SN2, PARAM_SN3, PARAM_SN4, PARAM_SNL,
                       PARAM_MXV, PARAM_SRC, PARAM_VOL, PARAM_BAS, PARAM_TRE, PARAM_BAL, PARAM_LIM):
             if body.startswith(param):
@@ -156,142 +136,83 @@ class NetAmpClient:
                     self._apply_param(z, param, value)
                 return
 
-        # Handle legacy/typo-ish mute/moff responses ($r1mute, $r1moff)
         if body in ("mute", "moff"):
             for z in zones:
                 self.zones[z].muted = (body == "mute")
-            return
-
-        self.logger.debug("Unknown NetAmp param in line: %s", line)
 
     def _apply_param(self, zone: int, param: str, value: str) -> None:
         st = self.zones[zone]
-
         if param == PARAM_SRC:
-            # value like '1','2','3','loc','on','off'
             if value == "off":
                 st.standby = True
-                # Preserve last known non-off source
-                if st.source in ("1", "2", "3", "4", "loc"):
+                if st.source in ("1", "2", "3", "loc"):
                     st.last_source = st.source
                 st.source = "off"
                 return
-
             if value == "on":
-                # Exit standby and select last playing source (device-side).
                 st.standby = False
-                if st.last_source and st.source not in ("1", "2", "3", "4", "loc"):
+                if st.last_source and st.source not in ("1", "2", "3", "loc"):
                     st.source = st.last_source
                 return
-
-            # Any explicit source selection exits standby
             st.standby = False
             st.source = value
-            if value in ("1", "2", "3", "4", "loc"):
+            if value in ("1", "2", "3", "loc"):
                 st.last_source = value
             return
 
         if param == PARAM_VOL:
-            # value might be 'mute'/'moff' or a number or 'var'/'fix'
             if value == "mute":
                 st.muted = True
-                return
-            if value == "moff":
+            elif value == "moff":
                 st.muted = False
-                return
-            if value in ("var", "fix"):
-                # volume mode, not currently surfaced
-                return
+            elif value not in ("var", "fix"):
+                try:
+                    st.volume = int(value)
+                except ValueError:
+                    pass
+            return
+
+        num_params = {
+            PARAM_MXV: "max_volume",
+            PARAM_BAS: "bass",
+            PARAM_TRE: "treble",
+            PARAM_BAL: "balance"
+        }
+        if param in num_params:
             try:
-                st.volume = int(value)
+                setattr(st, num_params[param], int(value))
             except ValueError:
-                return
+                pass
             return
 
-        if param == PARAM_MXV:
-            try:
-                st.max_volume = int(value)
-            except ValueError:
-                return
-            return
-
-        if param == PARAM_BAS:
-            try:
-                st.bass = int(value)
-            except ValueError:
-                return
-            return
-
-        if param == PARAM_TRE:
-            try:
-                st.treble = int(value)
-            except ValueError:
-                return
-            return
-
-        if param == PARAM_BAL:
-            try:
-                st.balance = int(value)
-            except ValueError:
-                return
-            return
-
-        if param == PARAM_LIM:
-            if value in LIM_VALUES:
-                st.lim = value
-            return
-
-        if param == PARAM_ZNN:
+        if param == PARAM_LIM and value in LIM_VALUES:
+            st.lim = value
+        elif param == PARAM_ZNN:
             st.zone_name = value
-            return
-
-        if param in (PARAM_SN1, PARAM_SN2, PARAM_SN3, PARAM_SN4, PARAM_SNL):
+        elif param in (PARAM_SN1, PARAM_SN2, PARAM_SN3, PARAM_SN4, PARAM_SNL):
             setattr(st, param, value)
-            return
 
     async def async_update(self) -> dict[str, Any]:
-        """Poll the device."""
-        # Pull names occasionally (they don't change often, but cheap enough).
-        # We request gpv (values) for both zones, and gpn (names) for zone 1 only (gpn returns global + zone data).
-        await self._send_and_collect("$g1gpv")
-        await self._send_and_collect("$g2gpv")
-        await self._send_and_collect("$g1gpn")
-        # Return a serializable snapshot for coordinator consumers
+        """Poll the device using concurrent requests."""
+        await asyncio.gather(
+            self._send_and_collect("$g1gpv"),
+            self._send_and_collect("$g2gpv"),
+            self._send_and_collect("$g1gpn")
+        )
         return self.snapshot()
 
     def snapshot(self) -> dict[str, Any]:
         return {
             "zones": {
-                z: {
-                    "zone": st.zone,
-                    "zone_name": st.zone_name,
-                    "standby": st.standby,
-                    "source": st.source,
-                    "last_source": st.last_source,
-                    "volume": st.volume,
-                    "muted": st.muted,
-                    "max_volume": st.max_volume,
-                    "bass": st.bass,
-                    "treble": st.treble,
-                    "balance": st.balance,
-                    "lim": st.lim,
-                    "sn1": st.sn1,
-                    "sn2": st.sn2,
-                    "sn3": st.sn3,
-                    "sn4": st.sn4,
-                    "snl": st.snl,
-                }
+                z: {f.name: getattr(st, f.name) for f in fields(ZoneState)}
                 for z, st in self.zones.items()
             }
         }
 
-    # ----- High level commands -----
     async def async_set_source(self, zone: int, source: str) -> None:
-        # source: "1","2","3","4","loc"
         await self._send_and_collect(f"$s{zone}src{source}")
 
     async def async_turn_on(self, zone: int) -> None:
-        # srcon selects last source
         await self._send_and_collect(f"$s{zone}srcon")
 
     async def async_turn_off(self, zone: int) -> None:
@@ -302,7 +223,6 @@ class NetAmpClient:
         await self._send_and_collect(f"$s{zone}vol{vol}")
 
     async def async_volume_step(self, zone: int, direction: str) -> None:
-        # direction: "+" or "-"
         if direction not in ("+", "-"):
             raise ValueError("direction must be + or -")
         await self._send_and_collect(f"$s{zone}vol{direction}")
@@ -327,7 +247,6 @@ class NetAmpClient:
         await self._send_and_collect(f"$s{zone}bal{v}")
 
     async def async_set_lim(self, zone: int, value: str) -> None:
-        # value: "1","a","d"
         if value not in LIM_VALUES:
             raise ValueError("Invalid LIM value")
         await self._send_and_collect(f"$s{zone}lim{value}")
