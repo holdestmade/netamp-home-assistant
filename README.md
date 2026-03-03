@@ -1,10 +1,3 @@
-
-
-README.md
-README.md
-+159
--14
-
 # NetAmp Home Assistant Custom Component
 
 Local-polling Home Assistant integration for **Armour Home NetAmp** devices.
