@@ -12,7 +12,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, ZONES
 from .netamp import NetAmpClient
 
-
 @dataclass(frozen=True)
 class NetAmpNumberDescription:
     key: str
@@ -21,9 +20,8 @@ class NetAmpNumberDescription:
     max_value: int
     step: int
     mode: NumberMode
-    setter: Callable[[NetAmpClient, int, int], Any]  # (client, zone, value)
-    getter: Callable[[dict[str, Any]], int | None]    # (zone_data) -> value
-
+    setter: Callable[[NetAmpClient, int, int], Any]
+    getter: Callable[[dict[str, Any]], int | None]
 
 DESCRIPTIONS: list[NetAmpNumberDescription] = [
     NetAmpNumberDescription(
@@ -68,7 +66,6 @@ DESCRIPTIONS: list[NetAmpNumberDescription] = [
     ),
 ]
 
-
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -82,7 +79,6 @@ async def async_setup_entry(
             entities.append(NetAmpZoneNumber(coordinator, client, entry, zone, desc))
 
     async_add_entities(entities)
-
 
 class NetAmpZoneNumber(CoordinatorEntity, NumberEntity):
     _attr_should_poll = False
@@ -107,7 +103,7 @@ class NetAmpZoneNumber(CoordinatorEntity, NumberEntity):
 
         self._attr_native_min_value = description.min_value
         self._attr_native_max_value = description.max_value
-        self._attr_native_step = description.step
+        self._attr_native_step = 1.0  # Force float step for UI sliders
         self._attr_mode = description.mode
 
     @property
