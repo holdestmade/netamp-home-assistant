@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to NetAmp",
+        "description": "Enter the NetAmp IP/hostname and TCP port (default 9760)."
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the NetAmp.",
+      "no_host": "Please select a discovered device or enter a host."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "NetAmp options",
+        "data": {
+          "scan_interval": "Polling interval (seconds)"
+        }
+      }
+    }
+  }
+}

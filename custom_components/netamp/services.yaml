@@ -1,0 +1,16 @@
+set_raw_command:
+  name: Send raw NetAmp command
+  description: Send a raw TCP command (without CRLF) to the NetAmp. Intended for debugging.
+  fields:
+    entry_id:
+      name: Config entry id
+      description: The config entry id of the NetAmp instance.
+      required: true
+      selector:
+        text:
+    command:
+      name: Command
+      description: Example: $g1gpv or $s1vol10
+      required: true
+      selector:
+        text:
