@@ -9,83 +9,69 @@ from .const import DOMAIN, DEFAULT_PORT, DEFAULT_SCAN_INTERVAL, CONF_SCAN_INTERV
 from .netamp import NetAmpClient
 from .discovery import async_discover_netamps
 
-
 class NetAmpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 2
 
     def __init__(self) -> None:
-        self._discovered: list[tuple[str, str]] = []  # (label, host)
+        self._discovered: list[tuple[str, str]] = []
 
     async def async_step_user(self, user_input=None) -> FlowResult:
         errors = {}
 
-        # Run discovery each time we display the form (cheap, 1s)
         try:
             found = await async_discover_netamps(timeout=1.0)
-        except Exception:  # noqa: BLE001
+        except Exception:
             found = []
 
         self._discovered = []
         for d in found:
-            label_bits = [d.ip]
-            if d.netbios:
-                label_bits.append(d.netbios)
-            if d.logical:
-                label_bits.append(f"#{d.logical}")
-            label = " • ".join(label_bits)
+            label = f"{d.ip} • {d.netbios or ''} • #{d.logical or ''}"
             self._discovered.append((label, d.ip))
 
         if user_input is not None:
-            device = user_input.get("device")
+            device_selection = user_input.get("device")
             host = user_input.get("host")
 
-            if device and device != "manual":
-                host = device
+            if device_selection and device_selection != "manual":
+                host = device_selection
 
             if not host:
                 errors["base"] = "no_host"
             else:
                 port = user_input.get("port", DEFAULT_PORT)
-
-                # Basic connectivity check
                 client = NetAmpClient(host=host, port=port, hass=self.hass)
                 try:
                     await client.async_ping()
-                except Exception:  # noqa: BLE001 - show generic error to user
-                    errors["base"] = "cannot_connect"
-                finally:
-                    await client.async_close()
-
-                if not errors:
-                    await self.async_set_unique_id(f"netamp_{host}_{port}")
+                    
+                    # Persistent Unique ID: Try MAC first, then host
+                    uid_base = next((d.mac for d in found if d.ip == host and d.mac), host)
+                    await self.async_set_unique_id(f"netamp_{uid_base}")
                     self._abort_if_unique_id_configured()
+                    
                     return self.async_create_entry(
                         title=f"NetAmp ({host})",
                         data={"host": host, "port": port},
                     )
+                except Exception:
+                    errors["base"] = "cannot_connect"
+                finally:
+                    await client.async_close()
 
-        # Build form schema
         device_options = {"manual": "Manual entry"}
         for label, host in self._discovered:
             device_options[host] = label
 
-        schema = vol.Schema(
-            {
-                vol.Optional("device", default=(self._discovered[0][1] if self._discovered else "manual")): vol.In(device_options),
-                vol.Optional("host"): str,
-                vol.Optional("port", default=DEFAULT_PORT): int,
-            }
-        )
+        schema = vol.Schema({
+            vol.Optional("device", default="manual"): vol.In(device_options),
+            vol.Optional("host"): str,
+            vol.Optional("port", default=DEFAULT_PORT): int,
+        })
 
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
-
-    async def async_step_import(self, user_input) -> FlowResult:
-        return await self.async_step_user(user_input)
 
     @staticmethod
     def async_get_options_flow(config_entry):
         return NetAmpOptionsFlowHandler(config_entry)
-
 
 class NetAmpOptionsFlowHandler(config_entries.OptionsFlow):
     def __init__(self, config_entry):
@@ -95,12 +81,10 @@ class NetAmpOptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        schema = vol.Schema(
-            {
-                vol.Optional(
-                    CONF_SCAN_INTERVAL,
-                    default=self.config_entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): vol.All(vol.Coerce(int), vol.Range(min=2, max=300))
-            }
-        )
+        schema = vol.Schema({
+            vol.Optional(
+                CONF_SCAN_INTERVAL,
+                default=self.config_entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+            ): vol.All(vol.Coerce(int), vol.Range(min=2, max=300))
+        })
         return self.async_show_form(step_id="init", data_schema=schema)
