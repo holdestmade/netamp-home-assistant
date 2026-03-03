@@ -10,7 +10,100 @@ set_raw_command:
         text:
     command:
       name: Command
-      description: Example: $g1gpv or $s1vol10
+      description: "Example: $g1gpv or $s1vol10"
       required: true
       selector:
         text:
+
+set_bass:
+  name: Set Bass
+  description: Set the bass level for a specific zone or all zones.
+  fields:
+    entry_id:
+      name: Config entry id
+      description: The config entry id of the NetAmp instance.
+      required: true
+      selector:
+        text:
+    zone:
+      name: Zone
+      description: Zone number (1 or 2). Use "X" for all zones.
+      required: true
+      default: "1"
+      selector:
+        select:
+          options:
+            - "1"
+            - "2"
+            - "X"
+    level:
+      name: Level
+      description: Bass level from -7 to 7.
+      required: true
+      selector:
+        number:
+          min: -7
+          max: 7
+          step: 1
+
+set_treble:
+  name: Set Treble
+  description: Set the treble level for a specific zone or all zones.
+  fields:
+    entry_id:
+      name: Config entry id
+      description: The config entry id of the NetAmp instance.
+      required: true
+      selector:
+        text:
+    zone:
+      name: Zone
+      description: Zone number (1 or 2). Use "X" for all zones.
+      required: true
+      default: "1"
+      selector:
+        select:
+          options:
+            - "1"
+            - "2"
+            - "X"
+    level:
+      name: Level
+      description: Treble level from -7 to 7.
+      required: true
+      selector:
+        number:
+          min: -7
+          max: 7
+          step: 1
+
+set_balance:
+  name: Set Balance
+  description: Set the balance level for a specific zone or all zones.
+  fields:
+    entry_id:
+      name: Config entry id
+      description: The config entry id of the NetAmp instance.
+      required: true
+      selector:
+        text:
+    zone:
+      name: Zone
+      description: Zone number (1 or 2). Use "X" for all zones.
+      required: true
+      default: "1"
+      selector:
+        select:
+          options:
+            - "1"
+            - "2"
+            - "X"
+    level:
+      name: Level
+      description: Balance level from -15 to 15.
+      required: true
+      selector:
+        number:
+          min: -15
+          max: 15
+          step: 1
