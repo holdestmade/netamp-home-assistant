@@ -66,19 +66,19 @@ class NetAmpZoneMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
 
     @property
     def state(self) -> str | None:
-    zd = self._zone_data()
-    standby = zd.get("standby")
-    if standby is True:
-        return MediaPlayerState.OFF
-    if standby is False:
+        zd = self._zone_data()
+        standby = zd.get("standby")
+        if standby is True:
+            return MediaPlayerState.OFF
+        if standby is False:
+            return MediaPlayerState.ON
+        # Fallback to source heuristic
+        src = zd.get("source")
+        if src == "off":
+            return MediaPlayerState.OFF
+        if src is None:
+            return None
         return MediaPlayerState.ON
-    # Fallback to source heuristic
-    src = zd.get("source")
-    if src == "off":
-        return MediaPlayerState.OFF
-    if src is None:
-        return None
-    return MediaPlayerState.ON
 
     @property
     def is_volume_muted(self) -> bool | None:
@@ -93,13 +93,13 @@ class NetAmpZoneMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
 
     @property
     def source(self) -> str | None:
-    zd = self._zone_data()
-    if zd.get("standby") is True:
+        zd = self._zone_data()
+        if zd.get("standby") is True:
+            return None
+        src = zd.get("source")
+        if src in ("1", "2", "3", "4", "loc"):
+            return self._source_label(src)
         return None
-    src = zd.get("source")
-    if src in ("1", "2", "3", "loc"):
-        return self._source_label(src)
-    return None
 
     def _source_label(self, src: str) -> str:
         zd = self._zone_data()
@@ -109,6 +109,8 @@ class NetAmpZoneMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
             return zd.get("sn2") or "Source 2"
         if src == "3":
             return zd.get("sn3") or "Source 3"
+        if src == "4":
+            return zd.get("sn4") or "Source 4"
         if src == "loc":
             return zd.get("snl") or "Local"
         return src
@@ -120,6 +122,7 @@ class NetAmpZoneMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
             zd.get("sn1") or "Source 1",
             zd.get("sn2") or "Source 2",
             zd.get("sn3") or "Source 3",
+            zd.get("sn4") or "Source 4",
             zd.get("snl") or "Local",
         ]
 
@@ -156,6 +159,7 @@ class NetAmpZoneMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
             (zd.get("sn1") or "Source 1"): "1",
             (zd.get("sn2") or "Source 2"): "2",
             (zd.get("sn3") or "Source 3"): "3",
+            (zd.get("sn4") or "Source 4"): "4",
             (zd.get("snl") or "Local"): "loc",
         }
         src = mapping.get(source)
@@ -167,6 +171,8 @@ class NetAmpZoneMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
                 src = "2"
             elif source.lower().strip() in ("source 3", "3"):
                 src = "3"
+            elif source.lower().strip() in ("source 4", "4"):
+                src = "4"
             elif source.lower().strip() in ("local", "loc"):
                 src = "loc"
         if not src:

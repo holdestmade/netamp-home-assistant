@@ -24,7 +24,7 @@ PARAM_SNL = "snl"
 PARAM_LIM = "lim"
 
 # Value mapping
-SRC_VALUES = ("1", "2", "3", "loc")
+SRC_VALUES = ("1", "2", "3", "4", "loc")
 LIM_VALUES = {
     "1": "Auto",
     "a": "Analogue",
