@@ -8,6 +8,7 @@ This integration provides:
 - Per-zone tone/limit numeric controls.
 - Per-zone LIM input selection.
 - Text sensors for zone and global source names.
+- Dedicated services for zone bass/treble/balance control.
 - A debug raw-command service for protocol troubleshooting.
 
 ---
@@ -132,6 +133,62 @@ data:
 ```
 
 > This service is intended for debugging and protocol inspection.
+
+### `netamp.set_bass`
+Set bass for one zone or both zones at once.
+
+Service fields:
+- `entry_id` (required): config entry id
+- `zone` (required): `"1"`, `"2"`, or `"X"` (apply to both zones)
+- `level` (required): integer from `-7` to `7`
+
+Example service call:
+
+```yaml
+service: netamp.set_bass
+data:
+  entry_id: "0123456789abcdef0123456789abcdef"
+  zone: "X"
+  level: 2
+```
+
+### `netamp.set_treble`
+Set treble for one zone or both zones at once.
+
+Service fields:
+- `entry_id` (required): config entry id
+- `zone` (required): `"1"`, `"2"`, or `"X"` (apply to both zones)
+- `level` (required): integer from `-7` to `7`
+
+Example service call:
+
+```yaml
+service: netamp.set_treble
+data:
+  entry_id: "0123456789abcdef0123456789abcdef"
+  zone: "1"
+  level: -3
+```
+
+### `netamp.set_balance`
+Set balance for one zone or both zones at once.
+
+Service fields:
+- `entry_id` (required): config entry id
+- `zone` (required): `"1"`, `"2"`, or `"X"` (apply to both zones)
+- `level` (required): integer from `-15` to `15`
+
+Example service call:
+
+```yaml
+service: netamp.set_balance
+data:
+  entry_id: "0123456789abcdef0123456789abcdef"
+  zone: "2"
+  level: 5
+```
+
+> These service calls trigger a coordinator refresh after the command is sent.
 
 ---
 
