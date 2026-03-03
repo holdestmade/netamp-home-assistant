@@ -1,4 +1,4 @@
-# NetAmp Home Assistant Custom Component (v0.2.0)
+# NetAmp Home Assistant Custom Component
 
 ## Install
 1. Copy `custom_components/netamp` into your Home Assistant `config/custom_components/`.
