@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from typing import Final
 
@@ -10,6 +11,13 @@ _LOGGER = logging.getLogger(__name__)
 UDP_PORT: Final = 30303
 UDP_PAYLOAD_PREFIX: Final = "IPNetAmp:"
 UDP_FIND: Final = "FIND:"
+
+_MAC_RE = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+
+
+def _is_mac_address(token: str) -> bool:
+    """Return True if *token* looks like a MAC address (XX:XX:XX:XX:XX:XX)."""
+    return bool(_MAC_RE.match(token))
 
 @dataclass(frozen=True)
 class NetAmpDiscovery:
@@ -83,7 +91,7 @@ async def async_discover_netamps(timeout: float = 1.0) -> list[NetAmpDiscovery]:
             else:
                 # fallback: try to find a MAC-looking token
                 for token in parts:
-                    if len(token) == 17 and token.count(":") == 5:
+                    if _is_mac_address(token):
                         mac = token
                 # netbios: any token that isn't numeric, isn't FIND, isn't MAC, isn't checksum-ish
                 for token in reversed(parts):
@@ -91,7 +99,7 @@ async def async_discover_netamps(timeout: float = 1.0) -> list[NetAmpDiscovery]:
                         continue
                     if token.isdigit():
                         continue
-                    if len(token) == 17 and token.count(":") == 5:
+                    if _is_mac_address(token):
                         continue
                     if token == ip:
                         continue

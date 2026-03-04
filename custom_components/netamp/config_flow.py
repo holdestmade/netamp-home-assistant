@@ -64,7 +64,10 @@ class NetAmpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schema = vol.Schema({
             vol.Optional("device", default="manual"): vol.In(device_options),
             vol.Optional("host"): str,
-            vol.Optional("port", default=DEFAULT_PORT): int,
+            vol.Optional("port", default=DEFAULT_PORT): vol.All(
+                vol.Coerce(int),
+                vol.Range(min=1, max=65535)
+            ),
         })
 
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)

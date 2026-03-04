@@ -24,6 +24,9 @@ from .const import (
     PARAM_SNL,
     PARAM_LIM,
     LIM_VALUES,
+    SRC_VALUES,
+    MAX_RESPONSE_LINES,
+    RESPONSE_IDLE_TIMEOUT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,7 +76,7 @@ class NetAmpClient:
             try:
                 self._writer.close()
                 await self._writer.wait_closed()
-            except Exception as err:
+            except (OSError, asyncio.CancelledError) as err:
                 self.logger.debug("Error closing connection: %s", err)
             finally:
                 self._reader = None
@@ -90,7 +93,7 @@ class NetAmpClient:
         self._writer.write((line + "\r\n").encode("ascii", "ignore"))
         await self._writer.drain()
 
-    async def _read_available_lines(self, idle_timeout: float = 0.25, max_lines: int = 64) -> list[str]:
+    async def _read_available_lines(self, idle_timeout: float = RESPONSE_IDLE_TIMEOUT, max_lines: int = MAX_RESPONSE_LINES) -> list[str]:
         if not self._reader:
             raise NetAmpProtocolError("Not connected")
         lines: list[str] = []
@@ -145,18 +148,18 @@ class NetAmpClient:
         if param == PARAM_SRC:
             if value == "off":
                 st.standby = True
-                if st.source in ("1", "2", "3", "loc"):
+                if st.source in SRC_VALUES:
                     st.last_source = st.source
                 st.source = "off"
                 return
             if value == "on":
                 st.standby = False
-                if st.last_source and st.source not in ("1", "2", "3", "loc"):
+                if st.last_source and st.source not in SRC_VALUES:
                     st.source = st.last_source
                 return
             st.standby = False
             st.source = value
-            if value in ("1", "2", "3", "loc"):
+            if value in SRC_VALUES:
                 st.last_source = value
             return
 

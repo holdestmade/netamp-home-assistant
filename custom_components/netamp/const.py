@@ -6,6 +6,10 @@ CONF_SCAN_INTERVAL = "scan_interval"
 
 ZONES = (1, 2)
 
+# Response reading limits
+MAX_RESPONSE_LINES = 64  # Maximum response lines before stopping
+RESPONSE_IDLE_TIMEOUT = 0.25  # Idle timeout (seconds) between response lines
+
 # Supported parameters we parse from responses
 PARAM_SRC = "src"
 PARAM_VOL = "vol"

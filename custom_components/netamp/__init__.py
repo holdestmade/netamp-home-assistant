@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.device_registry import DeviceEntryType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import DOMAIN, DEFAULT_SCAN_INTERVAL, CONF_SCAN_INTERVAL
 from .netamp import NetAmpClient
 from .service import async_setup_services
+
+_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[str] = ["media_player", "number", "select", "sensor"]
 
@@ -28,8 +32,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update_interval=timedelta(seconds=scan_interval),
     )
 
-    # Perform initial refresh so entities have data
-    await coordinator.async_config_entry_first_refresh()
+    # Perform initial refresh so entities have data; tolerate device being offline at startup
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except (ConfigEntryNotReady, OSError):
+        _LOGGER.warning("NetAmp %s unreachable at startup; will retry on next poll", host)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "client": client,
