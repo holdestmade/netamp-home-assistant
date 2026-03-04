@@ -21,6 +21,7 @@ config_entries_module.ConfigEntry = object
 core_module.HomeAssistant = object
 core_module.ServiceCall = object
 exceptions_module.HomeAssistantError = Exception
+exceptions_module.ConfigEntryNotReady = Exception
 device_registry_module.DeviceEntryType = object
 update_coordinator_module.DataUpdateCoordinator = object
 
