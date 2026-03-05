@@ -60,6 +60,13 @@ Source list uses dynamic names reported by the device when available:
 
 ## Installation
 
+### HACS
+1. Add this repository as a custom repository in HACS: https://github.com/holdestmade/netamp-home-assistant
+2. In Home Assistant, open HACS → Integrations, find NetAmp and install.
+3. Restart Home Assistant.
+4. Go to **Settings → Devices & services → Add integration**.
+5. Search for **NetAmp**.
+   
 ### Manual installation
 1. Copy `custom_components/netamp` into:
    ```
