@@ -7,7 +7,7 @@ This integration provides:
 - Per-zone media player control.
 - Per-zone tone/limit numeric controls.
 - Per-zone LIM input selection.
-- Text sensors for zone and global source names.
+- Text sensors for zone and source names.
 - Dedicated services for zone bass/treble/balance control.
 - A debug raw-command service for protocol troubleshooting.
 
@@ -22,17 +22,20 @@ Each configured amplifier exposes:
 
 Supported actions:
 - Turn on / off (`srcon` / `srcoff`)
-- Set absolute volume (0..30 internally)
+- Set absolute volume (0..30 internally, 0.0..1.0 in HA)
 - Volume up/down steps
 - Mute/unmute
 - Select source
 
-Source list uses dynamic names reported by the device when available:
+Selectable sources use dynamic names reported by the device when available:
 - Source 1 (`sn1`)
 - Source 2 (`sn2`)
 - Source 3 (`sn3`)
-- Source 4 (`sn4`)
 - Local source (`snl`)
+
+> **Note:** The NetAmp protocol defines sources 1, 2, 3, and Local as selectable inputs.
+> "Source 3a" (`sn4`) is a MAC-addressed network stream variant of source 3; it appears
+> as a name label in device responses but is not a separately addressable source.
 
 ### Number Entities (per zone)
 - Max Volume (`mxv`, 0..30)
@@ -53,7 +56,7 @@ Source list uses dynamic names reported by the device when available:
   - Source 1 Name (`sn1`)
   - Source 2 Name (`sn2`)
   - Source 3 Name (`sn3`)
-  - Source 4 Name (`sn4`)
+  - Source 3a Name (`sn4`)
   - Local Source Name (`snl`)
 
 ---
@@ -101,36 +104,41 @@ After setup, configure:
 
 ---
 
-## Protocol/state behavior notes
+## Protocol / state behaviour notes
 
-- Polling cycle fetches:
-  - Zone 1 values (`$g1gpv`)
-  - Zone 2 values (`$g2gpv`)
-  - Name data (`$g1gpn`)
-- `standby` is tracked from source state transitions:
-  - `src off` → standby `True`
-  - `src on` or explicit source selection → standby `False`
-- `last_source` is tracked so `srcon`/`src on` can restore meaningful source context.
-- Integration currently parses zone/global response lines matching `$r...` protocol format.
+Each poll cycle issues the following commands sequentially:
+
+| Command | Returns |
+|---|---|
+| `$g1gpv` | Zone 1 source, volume, balance, bass, treble |
+| `$g2gpv` | Zone 2 source, volume, balance, bass, treble |
+| `$g1gpn` | Zone 1 name, all source names |
+| `$g2gpn` | Zone 2 name (source names are the same, zone is don't-care) |
+| `$g1mxv` | Zone 1 max volume limit |
+| `$g2mxv` | Zone 2 max volume limit |
+| `$g1lim` | Zone 1 LIM input mode |
+| `$g2lim` | Zone 2 LIM input mode |
+
+> `mxv` and `lim` are not included in the `gpv` response so they are fetched separately.
+
+**Standby / source state machine:**
+- `src off` → standby `True`, `last_source` preserved
+- Explicit source select (e.g. `src 1`) → standby `False`, `last_source` updated
+- `src on` → standby `False`, last source restored (note: the device responds with the
+  actual source rather than echoing `srcon`, so state is updated from the source response)
 
 ---
 
 ## Services
 
 ### `netamp.set_raw_command`
-Send a raw NetAmp TCP command for debugging.
+Send a raw NetAmp TCP command. Intended for debugging and protocol inspection.
 
 Service fields:
 - `entry_id` (required): config entry id
 - `command` (required): command string, e.g. `$g1gpv`
 
-Validation rules:
-- Must not be empty
-- Max length: 64 characters
-- Must start with `$`
-- Allowed characters: `A-Z`, `a-z`, `0-9`, `+`, `-`
-
-Example service call:
+Example:
 
 ```yaml
 service: netamp.set_raw_command
@@ -139,7 +147,7 @@ data:
   command: "$g1gpv"
 ```
 
-> This service is intended for debugging and protocol inspection.
+A coordinator refresh is triggered after the command is sent so any state changes appear immediately.
 
 ### `netamp.set_bass`
 Set bass for one zone or both zones at once.
@@ -149,7 +157,7 @@ Service fields:
 - `zone` (required): `"1"`, `"2"`, or `"X"` (apply to both zones)
 - `level` (required): integer from `-7` to `7`
 
-Example service call:
+Example:
 
 ```yaml
 service: netamp.set_bass
@@ -167,7 +175,7 @@ Service fields:
 - `zone` (required): `"1"`, `"2"`, or `"X"` (apply to both zones)
 - `level` (required): integer from `-7` to `7`
 
-Example service call:
+Example:
 
 ```yaml
 service: netamp.set_treble
@@ -185,7 +193,7 @@ Service fields:
 - `zone` (required): `"1"`, `"2"`, or `"X"` (apply to both zones)
 - `level` (required): integer from `-15` to `15`
 
-Example service call:
+Example:
 
 ```yaml
 service: netamp.set_balance
@@ -194,8 +202,6 @@ data:
   zone: "2"
   level: 5
 ```
-
-> These service calls trigger a coordinator refresh after the command is sent.
 
 ---
 
@@ -208,20 +214,27 @@ data:
 
 ### Entity unavailable / stale values
 - Confirm TCP connectivity from Home Assistant host to NetAmp (`9760` by default).
-- Increase scan interval if the device is sensitive to rapid polling.
+- Reduce scan interval if you need faster state updates; increase it if the device is sensitive to rapid polling.
 - Check Home Assistant logs for `NetAmpProtocolError` or connection drops.
 
-### Source naming oddities
-- Some names are global and may be returned on zone 1 name polling.
-- If names look wrong, send `$g1gpn` via `set_raw_command` and inspect responses in logs.
+### Source naming
+- Source names (`sn1`–`sn4`, `snl`) are global (zone is don't-care per spec) and are read from zone 1 and zone 2 `gpn` responses.
+- If names look wrong, send `$g1gpn` via `set_raw_command` and inspect the responses in logs.
 
 ---
 
 ## Development notes
 
-- Python module compiles cleanly via:
+- Syntax check:
   ```bash
   python -m py_compile custom_components/netamp/*.py
   ```
-- Parser behavior for source transitions is covered by unit tests in:
-  - `tests/test_netamp_source_parsing.py`
+- Run unit tests:
+  ```bash
+  python -m unittest discover -s tests -v
+  ```
+- Test coverage includes:
+  - Source state transitions and `last_source` logic
+  - Mute / unmute response parsing (`$r1mute`, `$r1moff`, and `vol`-prefixed variants)
+  - Full `gpv` and `gpn` multi-line response parsing
+  - `mxv` and `lim` response parsing
