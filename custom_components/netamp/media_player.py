@@ -54,12 +54,7 @@ class NetAmpZoneMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
             "name": "NetAmp",
             "manufacturer": "Armour Home Electronics",
             "model": "NetAmp",
-            "configuration_url": f"tcp://{self._entry.data['host']}:{self._entry.data['port']}",
         }
-
-    @property
-    def available(self) -> bool:
-        return super().available
 
     def _zone_data(self) -> dict[str, Any]:
         return self.coordinator.data["zones"][self._zone]
@@ -109,8 +104,6 @@ class NetAmpZoneMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
             return zd.get("sn2") or "Source 2"
         if src == "3":
             return zd.get("sn3") or "Source 3"
-        if src == "4":
-            return zd.get("sn4") or "Source 4"
         if src == "loc":
             return zd.get("snl") or "Local"
         return src
@@ -122,7 +115,6 @@ class NetAmpZoneMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
             zd.get("sn1") or "Source 1",
             zd.get("sn2") or "Source 2",
             zd.get("sn3") or "Source 3",
-            zd.get("sn4") or "Source 4",
             zd.get("snl") or "Local",
         ]
 
@@ -159,20 +151,17 @@ class NetAmpZoneMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
             (zd.get("sn1") or "Source 1"): "1",
             (zd.get("sn2") or "Source 2"): "2",
             (zd.get("sn3") or "Source 3"): "3",
-            (zd.get("sn4") or "Source 4"): "4",
             (zd.get("snl") or "Local"): "loc",
         }
         src = mapping.get(source)
         if not src:
-            # Fallback: accept "Source 1" etc.
+            # Fallback: accept bare names/numbers
             if source.lower().strip() in ("source 1", "1"):
                 src = "1"
             elif source.lower().strip() in ("source 2", "2"):
                 src = "2"
             elif source.lower().strip() in ("source 3", "3"):
                 src = "3"
-            elif source.lower().strip() in ("source 4", "4"):
-                src = "4"
             elif source.lower().strip() in ("local", "loc"):
                 src = "loc"
         if not src:

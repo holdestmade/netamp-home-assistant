@@ -4,12 +4,17 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from .const import DOMAIN
 
 async def async_setup_services(hass: HomeAssistant) -> None:
+    # Guard against re-registration when multiple config entries are loaded.
+    if hass.services.has_service(DOMAIN, "set_raw_command"):
+        return
+
     async def _handle_raw_command(call: ServiceCall) -> None:
         entry_id = call.data["entry_id"]
         cmd = call.data["command"]
         data = hass.data[DOMAIN][entry_id]
         client = data["client"]
-        await client._send_and_collect(cmd)
+        await client.async_send_raw(cmd)
+        await data["coordinator"].async_request_refresh()
 
     async def _apply_to_zones(client, method_name: str, zone: str, level: int) -> None:
         """Apply a sound-setting method to one or all zones."""
