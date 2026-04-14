@@ -117,8 +117,12 @@ class NetAmpClient:
             if not lines:
                 await self.async_close()
                 raise NetAmpProtocolError("No response from NetAmp")
-            for line in lines:
-                self._handle_response_line(line)
+            try:
+                for line in lines:
+                    self._handle_response_line(line)
+            except NetAmpProtocolError:
+                await self.async_close()
+                raise
             return lines
 
     def _handle_response_line(self, line: str) -> None:
@@ -153,6 +157,9 @@ class NetAmpClient:
                 st.source = "off"
                 return
             if value == "on":
+                # Per spec the device responds with the actual source (e.g. $r1src1),
+                # not $r1srcon, so this branch is not reached from real device responses.
+                # Kept as a safe fallback in case of firmware variations.
                 st.standby = False
                 if st.last_source and st.source not in SRC_VALUES:
                     st.source = st.last_source
@@ -196,12 +203,18 @@ class NetAmpClient:
             setattr(st, param, value)
 
     async def async_update(self) -> dict[str, Any]:
-        """Poll the device using concurrent requests."""
-        await asyncio.gather(
-            self._send_and_collect("$g1gpv"),
-            self._send_and_collect("$g2gpv"),
-            self._send_and_collect("$g1gpn")
-        )
+        """Poll the device for all current state."""
+        # gpv: src, vol, bal, bas, tre for each zone
+        await self._send_and_collect("$g1gpv")
+        await self._send_and_collect("$g2gpv")
+        # gpn: zone name + source names for each zone (zone is don't-care for source names)
+        await self._send_and_collect("$g1gpn")
+        await self._send_and_collect("$g2gpn")
+        # mxv and lim are not included in gpv so must be fetched explicitly
+        await self._send_and_collect("$g1mxv")
+        await self._send_and_collect("$g2mxv")
+        await self._send_and_collect("$g1lim")
+        await self._send_and_collect("$g2lim")
         return self.snapshot()
 
     def snapshot(self) -> dict[str, Any]:
@@ -231,7 +244,8 @@ class NetAmpClient:
         await self._send_and_collect(f"$s{zone}vol{direction}")
 
     async def async_set_mute(self, zone: int, muted: bool) -> None:
-        await self._send_and_collect(f"$s{zone}vol{'mute' if muted else 'moff'}")
+        # Spec example: "$s1mute\r\n" / "$s1moff\r\n" — not "$s1volmute"
+        await self._send_and_collect(f"$s{zone}{'mute' if muted else 'moff'}")
 
     async def async_set_max_volume(self, zone: int, volume: int) -> None:
         vol = max(0, min(30, int(volume)))
@@ -253,3 +267,7 @@ class NetAmpClient:
         if value not in LIM_VALUES:
             raise ValueError("Invalid LIM value")
         await self._send_and_collect(f"$s{zone}lim{value}")
+
+    async def async_send_raw(self, cmd: str) -> list[str]:
+        """Send a raw protocol command and return response lines. For diagnostic use only."""
+        return await self._send_and_collect(cmd)

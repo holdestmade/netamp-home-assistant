@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import DOMAIN, DEFAULT_PORT, DEFAULT_SCAN_INTERVAL, CONF_SCAN_INTERVAL
-from .netamp import NetAmpClient
+from .netamp import NetAmpClient, NetAmpProtocolError
 from .discovery import async_discover_netamps
 
 class NetAmpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -20,7 +21,7 @@ class NetAmpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         try:
             found = await async_discover_netamps(timeout=1.0)
-        except Exception:
+        except (OSError, asyncio.TimeoutError):
             found = []
 
         self._discovered = []
@@ -52,7 +53,7 @@ class NetAmpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         title=f"NetAmp ({host})",
                         data={"host": host, "port": port},
                     )
-                except Exception:
+                except (OSError, asyncio.TimeoutError, NetAmpProtocolError):
                     errors["base"] = "cannot_connect"
                 finally:
                     await client.async_close()

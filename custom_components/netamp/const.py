@@ -28,7 +28,9 @@ PARAM_SNL = "snl"
 PARAM_LIM = "lim"
 
 # Value mapping
-SRC_VALUES = ("1", "2", "3", "4", "loc")
+# Spec-defined selectable sources: 1, 2, 3, loc. Source "3a" (sn4) is a MAC-addressed
+# network stream variant of source 3 and cannot be selected via a src command directly.
+SRC_VALUES = ("1", "2", "3", "loc")
 LIM_VALUES = {
     "1": "Auto",
     "a": "Analogue",
