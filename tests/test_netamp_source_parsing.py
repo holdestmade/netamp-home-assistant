@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 import unittest
@@ -16,13 +17,20 @@ update_coordinator_module = types.ModuleType("homeassistant.helpers.update_coord
 voluptuous_module = types.ModuleType("voluptuous")
 voluptuous_module.Schema = lambda value: value
 voluptuous_module.Required = lambda key: key
+voluptuous_module.Optional = lambda key, **kwargs: key
+voluptuous_module.All = lambda *validators: validators
+voluptuous_module.In = lambda container: container
+voluptuous_module.Range = lambda **kwargs: kwargs
+voluptuous_module.Coerce = lambda type_: type_
 
 config_entries_module.ConfigEntry = object
 core_module.HomeAssistant = object
 core_module.ServiceCall = object
 exceptions_module.HomeAssistantError = Exception
 exceptions_module.ConfigEntryNotReady = Exception
+exceptions_module.ServiceValidationError = Exception
 device_registry_module.DeviceEntryType = object
+device_registry_module.DeviceInfo = dict
 update_coordinator_module.DataUpdateCoordinator = object
 
 homeassistant_module.config_entries = config_entries_module
@@ -47,7 +55,7 @@ from custom_components.netamp.netamp import NetAmpClient
 
 class NetAmpSourceParsingTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.client = NetAmpClient(host="127.0.0.1", port=9760, hass=None)  # type: ignore[arg-type]
+        self.client = NetAmpClient(host="127.0.0.1", port=9760)
         self.state = self.client.zones[1]
 
     def test_explicit_source_sets_last_source_and_clears_standby(self) -> None:
@@ -86,7 +94,7 @@ class NetAmpSourceParsingTests(unittest.TestCase):
 
 class NetAmpMuteParsingTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.client = NetAmpClient(host="127.0.0.1", port=9760, hass=None)  # type: ignore[arg-type]
+        self.client = NetAmpClient(host="127.0.0.1", port=9760)
         self.state = self.client.zones[1]
 
     def test_mute_response_sets_muted(self) -> None:
@@ -112,7 +120,7 @@ class NetAmpMuteParsingTests(unittest.TestCase):
 
 class NetAmpGpvParsingTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.client = NetAmpClient(host="127.0.0.1", port=9760, hass=None)  # type: ignore[arg-type]
+        self.client = NetAmpClient(host="127.0.0.1", port=9760)
 
     def test_gpv_response_updates_zone_state(self) -> None:
         # Simulate the multi-line gpv response described in the spec
@@ -152,6 +160,67 @@ class NetAmpGpvParsingTests(unittest.TestCase):
     def test_lim_response_updates_lim(self) -> None:
         self.client._handle_response_line("$r1lima")
         self.assertEqual(self.client.zones[1].lim, "a")
+
+    def test_zone_x_response_updates_all_zones(self) -> None:
+        self.client._handle_response_line("$rXvol15")
+        self.assertEqual(self.client.zones[1].volume, 15)
+        self.assertEqual(self.client.zones[2].volume, 15)
+
+    def test_error_response_raises(self) -> None:
+        from custom_components.netamp.netamp import NetAmpProtocolError
+
+        with self.assertRaises(NetAmpProtocolError):
+            self.client._handle_response_line("$rxError")
+
+    def test_snapshot_contains_all_zone_fields(self) -> None:
+        self.client._handle_response_line("$r1vol12")
+        snap = self.client.snapshot()
+        self.assertEqual(snap["zones"][1]["volume"], 12)
+        self.assertIn("zone_name", snap["zones"][1])
+        self.assertIn(2, snap["zones"])
+
+
+class NetAmpTieredPollingTests(unittest.TestCase):
+    """async_update fetches names/mxv/lim only every STATIC_POLL_CYCLES polls."""
+
+    def setUp(self) -> None:
+        self.client = NetAmpClient(host="127.0.0.1", port=9760)
+        self.sent: list[str] = []
+
+        async def fake_send(cmd: str) -> list[str]:
+            self.sent.append(cmd)
+            return [cmd]
+
+        self.client._send_and_collect = fake_send  # type: ignore[method-assign]
+
+    def test_first_update_fetches_everything(self) -> None:
+        asyncio.run(self.client.async_update())
+        self.assertEqual(
+            self.sent,
+            [
+                "$g1gpv", "$g2gpv",
+                "$g1gpn", "$g2gpn",
+                "$g1mxv", "$g2mxv",
+                "$g1lim", "$g2lim",
+            ],
+        )
+
+    def test_subsequent_updates_only_fetch_gpv(self) -> None:
+        asyncio.run(self.client.async_update())
+        self.sent.clear()
+        asyncio.run(self.client.async_update())
+        self.assertEqual(self.sent, ["$g1gpv", "$g2gpv"])
+
+    def test_static_data_refetched_after_cycle(self) -> None:
+        from custom_components.netamp.const import STATIC_POLL_CYCLES
+
+        for _ in range(STATIC_POLL_CYCLES):
+            asyncio.run(self.client.async_update())
+        self.sent.clear()
+        asyncio.run(self.client.async_update())
+        self.assertIn("$g1gpn", self.sent)
+        self.assertIn("$g1mxv", self.sent)
+        self.assertIn("$g1lim", self.sent)
 
 
 if __name__ == "__main__":

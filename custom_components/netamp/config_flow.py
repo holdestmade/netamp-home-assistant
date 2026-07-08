@@ -8,26 +8,25 @@ from homeassistant.data_entry_flow import FlowResult
 
 from .const import DOMAIN, DEFAULT_PORT, DEFAULT_SCAN_INTERVAL, CONF_SCAN_INTERVAL
 from .netamp import NetAmpClient, NetAmpProtocolError
-from .discovery import async_discover_netamps
+from .discovery import NetAmpDiscovery, async_discover_netamps
 
 class NetAmpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 2
 
     def __init__(self) -> None:
-        self._discovered: list[tuple[str, str]] = []
+        self._discovered: list[NetAmpDiscovery] = []
 
     async def async_step_user(self, user_input=None) -> FlowResult:
         errors = {}
 
-        try:
-            found = await async_discover_netamps(timeout=1.0)
-        except (OSError, asyncio.TimeoutError):
-            found = []
-
-        self._discovered = []
-        for d in found:
-            label = f"{d.ip} • {d.netbios or ''} • #{d.logical or ''}"
-            self._discovered.append((label, d.ip))
+        if user_input is None:
+            # Only scan when first showing the form; re-displays after a
+            # connection error reuse the earlier results instead of paying
+            # for another broadcast round-trip.
+            try:
+                self._discovered = await async_discover_netamps(timeout=1.0)
+            except (OSError, asyncio.TimeoutError):
+                self._discovered = []
 
         if user_input is not None:
             device_selection = user_input.get("device")
@@ -40,15 +39,17 @@ class NetAmpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "no_host"
             else:
                 port = user_input.get("port", DEFAULT_PORT)
-                client = NetAmpClient(host=host, port=port, hass=self.hass)
+                client = NetAmpClient(host=host, port=port)
                 try:
                     await client.async_ping()
-                    
+
                     # Persistent Unique ID: Try MAC first, then host
-                    uid_base = next((d.mac for d in found if d.ip == host and d.mac), host)
+                    uid_base = next(
+                        (d.mac for d in self._discovered if d.ip == host and d.mac), host
+                    )
                     await self.async_set_unique_id(f"netamp_{uid_base}")
                     self._abort_if_unique_id_configured()
-                    
+
                     return self.async_create_entry(
                         title=f"NetAmp ({host})",
                         data={"host": host, "port": port},
@@ -59,8 +60,8 @@ class NetAmpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     await client.async_close()
 
         device_options = {"manual": "Manual entry"}
-        for label, host in self._discovered:
-            device_options[host] = label
+        for d in self._discovered:
+            device_options[d.ip] = f"{d.ip} • {d.netbios or ''} • #{d.logical or ''}"
 
         schema = vol.Schema({
             vol.Optional("device", default="manual"): vol.In(device_options),
@@ -75,11 +76,11 @@ class NetAmpConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def async_get_options_flow(config_entry):
-        return NetAmpOptionsFlowHandler(config_entry)
+        return NetAmpOptionsFlowHandler()
 
 class NetAmpOptionsFlowHandler(config_entries.OptionsFlow):
-    def __init__(self, config_entry):
-        self.config_entry = config_entry
+    # Note: self.config_entry is provided by the OptionsFlow base class;
+    # assigning it explicitly is deprecated and removed in HA 2025.12.
 
     async def async_step_init(self, user_input=None) -> FlowResult:
         if user_input is not None:

@@ -7,9 +7,9 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ZONES
+from .const import DOMAIN, VOLUME_MAX, ZONES
+from .entity import NetAmpZoneEntity
 from .netamp import NetAmpClient
 
 @dataclass(frozen=True)
@@ -28,7 +28,7 @@ DESCRIPTIONS: list[NetAmpNumberDescription] = [
         key="max_volume",
         name="Max Volume",
         min_value=0,
-        max_value=30,
+        max_value=VOLUME_MAX,
         step=1,
         mode=NumberMode.SLIDER,
         setter=lambda c, z, v: c.async_set_max_volume(z, v),
@@ -73,17 +73,13 @@ async def async_setup_entry(
     client: NetAmpClient = data["client"]
     coordinator = data["coordinator"]
 
-    entities: list[NumberEntity] = []
-    for zone in ZONES:
-        for desc in DESCRIPTIONS:
-            entities.append(NetAmpZoneNumber(coordinator, client, entry, zone, desc))
+    async_add_entities(
+        NetAmpZoneNumber(coordinator, client, entry, zone, desc)
+        for zone in ZONES
+        for desc in DESCRIPTIONS
+    )
 
-    async_add_entities(entities)
-
-class NetAmpZoneNumber(CoordinatorEntity, NumberEntity):
-    _attr_should_poll = False
-    _attr_has_entity_name = True
-
+class NetAmpZoneNumber(NetAmpZoneEntity, NumberEntity):
     def __init__(
         self,
         coordinator,
@@ -92,10 +88,8 @@ class NetAmpZoneNumber(CoordinatorEntity, NumberEntity):
         zone: int,
         description: NetAmpNumberDescription,
     ) -> None:
-        super().__init__(coordinator)
+        super().__init__(coordinator, entry, zone)
         self._client = client
-        self._entry = entry
-        self._zone = zone
         self.entity_description = description
 
         self._attr_unique_id = f"{entry.entry_id}_zone_{zone}_{description.key}"
@@ -105,18 +99,6 @@ class NetAmpZoneNumber(CoordinatorEntity, NumberEntity):
         self._attr_native_max_value = description.max_value
         self._attr_native_step = 1.0  # Force float step for UI sliders
         self._attr_mode = description.mode
-
-    @property
-    def device_info(self) -> dict[str, Any]:
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": "NetAmp",
-            "manufacturer": "Armour Home Electronics",
-            "model": "NetAmp",
-        }
-
-    def _zone_data(self) -> dict[str, Any]:
-        return self.coordinator.data["zones"][self._zone]
 
     @property
     def native_value(self) -> float | None:
