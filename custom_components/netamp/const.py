@@ -6,9 +6,17 @@ CONF_SCAN_INTERVAL = "scan_interval"
 
 ZONES = (1, 2)
 
-# Response reading limits
+# Connection / response reading limits
+CONNECT_TIMEOUT = 5.0  # Seconds to wait when opening the TCP connection
 MAX_RESPONSE_LINES = 64  # Maximum response lines before stopping
 RESPONSE_IDLE_TIMEOUT = 0.25  # Idle timeout (seconds) between response lines
+
+# Zone names, source names, max volume and LIM mode rarely change, so they are
+# only refreshed every Nth poll cycle (the first poll always fetches them).
+STATIC_POLL_CYCLES = 6
+
+# Device volume range
+VOLUME_MAX = 30
 
 # Supported parameters we parse from responses
 PARAM_SRC = "src"

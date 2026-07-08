@@ -102,16 +102,28 @@ After setup, configure:
   - Maximum: `300`
   - Default: `10`
 
+Option changes are applied immediately (the integration reloads itself); no
+Home Assistant restart is required.
+
 ---
 
 ## Protocol / state behaviour notes
 
-Each poll cycle issues the following commands sequentially:
+Polling is tiered to keep regular polls fast (each command pays a response
+idle timeout, so fewer commands per poll means lower latency and less bus
+traffic):
+
+**Every poll cycle:**
 
 | Command | Returns |
 |---|---|
 | `$g1gpv` | Zone 1 source, volume, balance, bass, treble |
 | `$g2gpv` | Zone 2 source, volume, balance, bass, treble |
+
+**Every 6th poll cycle (and always on the first poll):**
+
+| Command | Returns |
+|---|---|
 | `$g1gpn` | Zone 1 name, all source names |
 | `$g2gpn` | Zone 2 name (source names are the same, zone is don't-care) |
 | `$g1mxv` | Zone 1 max volume limit |
@@ -119,7 +131,16 @@ Each poll cycle issues the following commands sequentially:
 | `$g1lim` | Zone 1 LIM input mode |
 | `$g2lim` | Zone 2 LIM input mode |
 
-> `mxv` and `lim` are not included in the `gpv` response so they are fetched separately.
+> `mxv` and `lim` are not included in the `gpv` response so they are fetched
+> separately. Zone/source names, `mxv` and `lim` rarely change, so they are
+> refreshed on a slower cadence. Set commands echo the new value back and are
+> parsed immediately, so values changed through this integration never appear
+> stale.
+
+**Connection handling:**
+- TCP connect attempts time out after 5 seconds.
+- The connection is dropped and re-established on any I/O error, so a failed
+  poll never leaves a stale socket behind.
 
 **Standby / source state machine:**
 - `src off` → standby `True`, `last_source` preserved
@@ -130,6 +151,10 @@ Each poll cycle issues the following commands sequentially:
 ---
 
 ## Services
+
+All services validate their fields (zone must be `1`, `2` or `X`; levels must
+be within range) and report a clear error if the given `entry_id` does not
+match a loaded NetAmp config entry.
 
 ### `netamp.set_raw_command`
 Send a raw NetAmp TCP command. Intended for debugging and protocol inspection.
@@ -238,3 +263,6 @@ data:
   - Mute / unmute response parsing (`$r1mute`, `$r1moff`, and `vol`-prefixed variants)
   - Full `gpv` and `gpn` multi-line response parsing
   - `mxv` and `lim` response parsing
+  - Zone `X` broadcast responses updating both zones
+  - Error response handling
+  - Tiered polling cadence (static data fetched every 6th cycle)

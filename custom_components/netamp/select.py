@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from typing import Any
-
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, ZONES, LIM_VALUES
+from .entity import NetAmpZoneEntity
 from .netamp import NetAmpClient
+
+# Reverse map: display label -> device value
+LIM_LABEL_TO_VALUE = {label: value for value, label in LIM_VALUES.items()}
 
 
 async def async_setup_entry(
@@ -22,31 +23,14 @@ async def async_setup_entry(
     async_add_entities([NetAmpLimSelect(coordinator, client, entry, zone=z) for z in ZONES])
 
 
-class NetAmpLimSelect(CoordinatorEntity, SelectEntity):
-    _attr_should_poll = False
-    _attr_has_entity_name = True
+class NetAmpLimSelect(NetAmpZoneEntity, SelectEntity):
+    _attr_options = list(LIM_VALUES.values())
 
     def __init__(self, coordinator, client: NetAmpClient, entry: ConfigEntry, zone: int) -> None:
-        super().__init__(coordinator)
+        super().__init__(coordinator, entry, zone)
         self._client = client
-        self._entry = entry
-        self._zone = zone
-
         self._attr_unique_id = f"{entry.entry_id}_zone_{zone}_lim"
         self._attr_name = f"Zone {zone} LIM Input"
-        self._attr_options = list(LIM_VALUES.values())
-
-    @property
-    def device_info(self) -> dict[str, Any]:
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": "NetAmp",
-            "manufacturer": "Armour Home Electronics",
-            "model": "NetAmp",
-        }
-
-    def _zone_data(self) -> dict[str, Any]:
-        return self.coordinator.data["zones"][self._zone]
 
     @property
     def current_option(self) -> str | None:
@@ -56,9 +40,7 @@ class NetAmpLimSelect(CoordinatorEntity, SelectEntity):
         return LIM_VALUES.get(raw)
 
     async def async_select_option(self, option: str) -> None:
-        # Convert label back to device value
-        inv = {v: k for k, v in LIM_VALUES.items()}
-        raw = inv.get(option)
+        raw = LIM_LABEL_TO_VALUE.get(option)
         if not raw:
             return
         await self._client.async_set_lim(self._zone, raw)

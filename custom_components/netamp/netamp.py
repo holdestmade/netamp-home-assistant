@@ -6,8 +6,6 @@ import re
 from dataclasses import dataclass, fields
 from typing import Any
 
-from homeassistant.core import HomeAssistant
-
 from .const import (
     ZONES,
     PARAM_SRC,
@@ -25,8 +23,11 @@ from .const import (
     PARAM_LIM,
     LIM_VALUES,
     SRC_VALUES,
+    CONNECT_TIMEOUT,
     MAX_RESPONSE_LINES,
     RESPONSE_IDLE_TIMEOUT,
+    STATIC_POLL_CYCLES,
+    VOLUME_MAX,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,22 +54,24 @@ class ZoneState:
     sn4: str | None = None
     snl: str | None = None
 
+_ZONE_STATE_FIELDS = tuple(f.name for f in fields(ZoneState))
+
 class NetAmpProtocolError(Exception):
     pass
 
 class NetAmpClient:
-    def __init__(self, host: str, port: int, hass: HomeAssistant) -> None:
+    def __init__(self, host: str, port: int) -> None:
         self._host = host
         self._port = port
-        self._hass = hass
         self._lock = asyncio.Lock()
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
-        self.logger = _LOGGER
+        # Countdown until the next refresh of rarely-changing data (names, mxv, lim).
+        # Starts at 0 so the first update always fetches everything.
+        self._static_countdown = 0
         self.zones: dict[int, ZoneState] = {z: ZoneState(zone=z) for z in ZONES}
 
     async def async_ping(self) -> None:
-        await self._ensure_connected()
         await self._send_and_collect("$g1gpv")
 
     async def async_close(self) -> None:
@@ -77,7 +80,7 @@ class NetAmpClient:
                 self._writer.close()
                 await self._writer.wait_closed()
             except (OSError, asyncio.CancelledError) as err:
-                self.logger.debug("Error closing connection: %s", err)
+                _LOGGER.debug("Error closing connection: %s", err)
             finally:
                 self._reader = None
                 self._writer = None
@@ -85,7 +88,9 @@ class NetAmpClient:
     async def _ensure_connected(self) -> None:
         if self._reader and self._writer and not self._writer.is_closing():
             return
-        self._reader, self._writer = await asyncio.open_connection(self._host, self._port)
+        self._reader, self._writer = await asyncio.wait_for(
+            asyncio.open_connection(self._host, self._port), timeout=CONNECT_TIMEOUT
+        )
 
     async def _write_line(self, line: str) -> None:
         if not self._writer:
@@ -111,9 +116,14 @@ class NetAmpClient:
 
     async def _send_and_collect(self, cmd: str) -> list[str]:
         async with self._lock:
-            await self._ensure_connected()
-            await self._write_line(cmd)
-            lines = await self._read_available_lines()
+            try:
+                await self._ensure_connected()
+                await self._write_line(cmd)
+                lines = await self._read_available_lines()
+            except (OSError, asyncio.TimeoutError):
+                # Drop the connection so the next command starts from a clean socket.
+                await self.async_close()
+                raise
             if not lines:
                 await self.async_close()
                 raise NetAmpProtocolError("No response from NetAmp")
@@ -203,24 +213,35 @@ class NetAmpClient:
             setattr(st, param, value)
 
     async def async_update(self) -> dict[str, Any]:
-        """Poll the device for all current state."""
+        """Poll the device for current state.
+
+        Volume/source/tone (gpv) is fetched every cycle. Zone/source names,
+        max volume and LIM mode change rarely, so they are only refetched
+        every STATIC_POLL_CYCLES cycles. Each command pays the response idle
+        timeout, so skipping them keeps regular polls fast. Set commands echo
+        the new value back and are parsed immediately, so values changed
+        through this integration never appear stale.
+        """
         # gpv: src, vol, bal, bas, tre for each zone
         await self._send_and_collect("$g1gpv")
         await self._send_and_collect("$g2gpv")
-        # gpn: zone name + source names for each zone (zone is don't-care for source names)
-        await self._send_and_collect("$g1gpn")
-        await self._send_and_collect("$g2gpn")
-        # mxv and lim are not included in gpv so must be fetched explicitly
-        await self._send_and_collect("$g1mxv")
-        await self._send_and_collect("$g2mxv")
-        await self._send_and_collect("$g1lim")
-        await self._send_and_collect("$g2lim")
+        if self._static_countdown <= 0:
+            # gpn: zone name + source names for each zone (zone is don't-care for source names)
+            await self._send_and_collect("$g1gpn")
+            await self._send_and_collect("$g2gpn")
+            # mxv and lim are not included in gpv so must be fetched explicitly
+            await self._send_and_collect("$g1mxv")
+            await self._send_and_collect("$g2mxv")
+            await self._send_and_collect("$g1lim")
+            await self._send_and_collect("$g2lim")
+            self._static_countdown = STATIC_POLL_CYCLES
+        self._static_countdown -= 1
         return self.snapshot()
 
     def snapshot(self) -> dict[str, Any]:
         return {
             "zones": {
-                z: {f.name: getattr(st, f.name) for f in fields(ZoneState)}
+                z: {name: getattr(st, name) for name in _ZONE_STATE_FIELDS}
                 for z, st in self.zones.items()
             }
         }
@@ -235,7 +256,7 @@ class NetAmpClient:
         await self._send_and_collect(f"$s{zone}srcoff")
 
     async def async_set_volume(self, zone: int, volume: int) -> None:
-        vol = max(0, min(30, int(volume)))
+        vol = max(0, min(VOLUME_MAX, int(volume)))
         await self._send_and_collect(f"$s{zone}vol{vol}")
 
     async def async_volume_step(self, zone: int, direction: str) -> None:
@@ -248,7 +269,7 @@ class NetAmpClient:
         await self._send_and_collect(f"$s{zone}{'mute' if muted else 'moff'}")
 
     async def async_set_max_volume(self, zone: int, volume: int) -> None:
-        vol = max(0, min(30, int(volume)))
+        vol = max(0, min(VOLUME_MAX, int(volume)))
         await self._send_and_collect(f"$s{zone}mxv{vol}")
 
     async def async_set_bass(self, zone: int, value: int) -> None:

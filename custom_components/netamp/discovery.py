@@ -35,11 +35,7 @@ class _DiscoveryProtocol(asyncio.DatagramProtocol):
         self.transport = transport  # type: ignore[assignment]
 
     def datagram_received(self, data: bytes, addr) -> None:
-        try:
-            s = data.decode("utf-8", "ignore")
-        except Exception:  # noqa: BLE001
-            return
-        self.responses.append(s)
+        self.responses.append(data.decode("utf-8", "ignore"))
 
 async def async_discover_netamps(timeout: float = 1.0) -> list[NetAmpDiscovery]:
     """Broadcast FIND to locate NetAmp devices.

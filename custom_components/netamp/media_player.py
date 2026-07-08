@@ -1,19 +1,37 @@
 from __future__ import annotations
 
-from typing import Any
-
-from homeassistant.components.media_player import MediaPlayerEntity
-from homeassistant.components.media_player.const import MediaPlayerState
-from homeassistant.components.media_player.const import (
+from homeassistant.components.media_player import (
+    MediaPlayerEntity,
     MediaPlayerEntityFeature,
+    MediaPlayerState,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, ZONES
+from .const import DOMAIN, VOLUME_MAX, ZONES
+from .entity import NetAmpZoneEntity
 from .netamp import NetAmpClient
+
+# (state-field, device source value, fallback label)
+SOURCE_SLOTS = (
+    ("sn1", "1", "Source 1"),
+    ("sn2", "2", "Source 2"),
+    ("sn3", "3", "Source 3"),
+    ("snl", "loc", "Local"),
+)
+
+# Bare names/numbers accepted as a fallback when a label doesn't match
+SOURCE_ALIASES = {
+    "source 1": "1",
+    "1": "1",
+    "source 2": "2",
+    "2": "2",
+    "source 3": "3",
+    "3": "3",
+    "local": "loc",
+    "loc": "loc",
+}
 
 
 async def async_setup_entry(
@@ -26,41 +44,29 @@ async def async_setup_entry(
     async_add_entities([NetAmpZoneMediaPlayer(coordinator, client, entry, zone=z) for z in ZONES])
 
 
-class NetAmpZoneMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
-    _attr_should_poll = False
+class NetAmpZoneMediaPlayer(NetAmpZoneEntity, MediaPlayerEntity):
+    _attr_supported_features = (
+        MediaPlayerEntityFeature.TURN_ON
+        | MediaPlayerEntityFeature.TURN_OFF
+        | MediaPlayerEntityFeature.VOLUME_SET
+        | MediaPlayerEntityFeature.VOLUME_STEP
+        | MediaPlayerEntityFeature.VOLUME_MUTE
+        | MediaPlayerEntityFeature.SELECT_SOURCE
+    )
 
     def __init__(self, coordinator, client: NetAmpClient, entry: ConfigEntry, zone: int) -> None:
-        super().__init__(coordinator)
+        super().__init__(coordinator, entry, zone)
         self._client = client
-        self._entry = entry
-        self._zone = zone
-
         self._attr_unique_id = f"{entry.entry_id}_zone_{zone}"
-        self._attr_name = f"NetAmp Zone {zone}"
+        self._attr_name = f"Zone {zone}"
 
-        self._attr_supported_features = (
-            MediaPlayerEntityFeature.TURN_ON
-            | MediaPlayerEntityFeature.TURN_OFF
-            | MediaPlayerEntityFeature.VOLUME_SET
-            | MediaPlayerEntityFeature.VOLUME_STEP
-            | MediaPlayerEntityFeature.VOLUME_MUTE
-            | MediaPlayerEntityFeature.SELECT_SOURCE
-        )
+    def _source_labels(self) -> dict[str, str]:
+        """Map device source value -> current display label."""
+        zd = self._zone_data()
+        return {src: zd.get(field) or fallback for field, src, fallback in SOURCE_SLOTS}
 
     @property
-    def device_info(self) -> dict[str, Any]:
-        return {
-            "identifiers": {(DOMAIN, self._entry.entry_id)},
-            "name": "NetAmp",
-            "manufacturer": "Armour Home Electronics",
-            "model": "NetAmp",
-        }
-
-    def _zone_data(self) -> dict[str, Any]:
-        return self.coordinator.data["zones"][self._zone]
-
-    @property
-    def state(self) -> str | None:
+    def state(self) -> MediaPlayerState | None:
         zd = self._zone_data()
         standby = zd.get("standby")
         if standby is True:
@@ -84,39 +90,18 @@ class NetAmpZoneMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         vol = self._zone_data().get("volume")
         if vol is None:
             return None
-        return max(0.0, min(1.0, vol / 30.0))
+        return max(0.0, min(1.0, vol / VOLUME_MAX))
 
     @property
     def source(self) -> str | None:
         zd = self._zone_data()
         if zd.get("standby") is True:
             return None
-        src = zd.get("source")
-        if src in ("1", "2", "3", "4", "loc"):
-            return self._source_label(src)
-        return None
-
-    def _source_label(self, src: str) -> str:
-        zd = self._zone_data()
-        if src == "1":
-            return zd.get("sn1") or "Source 1"
-        if src == "2":
-            return zd.get("sn2") or "Source 2"
-        if src == "3":
-            return zd.get("sn3") or "Source 3"
-        if src == "loc":
-            return zd.get("snl") or "Local"
-        return src
+        return self._source_labels().get(zd.get("source"))
 
     @property
     def source_list(self) -> list[str] | None:
-        zd = self._zone_data()
-        return [
-            zd.get("sn1") or "Source 1",
-            zd.get("sn2") or "Source 2",
-            zd.get("sn3") or "Source 3",
-            zd.get("snl") or "Local",
-        ]
+        return list(self._source_labels().values())
 
     async def async_turn_on(self) -> None:
         await self._client.async_turn_on(self._zone)
@@ -128,7 +113,7 @@ class NetAmpZoneMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
 
     async def async_set_volume_level(self, volume: float) -> None:
         # HA is 0..1; NetAmp is 0..30
-        vol = int(round(max(0.0, min(1.0, volume)) * 30))
+        vol = int(round(max(0.0, min(1.0, volume)) * VOLUME_MAX))
         await self._client.async_set_volume(self._zone, vol)
         await self.coordinator.async_request_refresh()
 
@@ -145,25 +130,9 @@ class NetAmpZoneMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         await self.coordinator.async_request_refresh()
 
     async def async_select_source(self, source: str) -> None:
-        # Match against current labels
-        zd = self._zone_data()
-        mapping = {
-            (zd.get("sn1") or "Source 1"): "1",
-            (zd.get("sn2") or "Source 2"): "2",
-            (zd.get("sn3") or "Source 3"): "3",
-            (zd.get("snl") or "Local"): "loc",
-        }
-        src = mapping.get(source)
-        if not src:
-            # Fallback: accept bare names/numbers
-            if source.lower().strip() in ("source 1", "1"):
-                src = "1"
-            elif source.lower().strip() in ("source 2", "2"):
-                src = "2"
-            elif source.lower().strip() in ("source 3", "3"):
-                src = "3"
-            elif source.lower().strip() in ("local", "loc"):
-                src = "loc"
+        # Match against current labels, then fall back to bare names/numbers
+        label_to_src = {label: src for src, label in self._source_labels().items()}
+        src = label_to_src.get(source) or SOURCE_ALIASES.get(source.lower().strip())
         if not src:
             return
         await self._client.async_set_source(self._zone, src)
